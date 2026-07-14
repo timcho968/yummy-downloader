@@ -1,6 +1,8 @@
 князь недоволен, света и связи нету. В условиях джуглей с ракетами я создал этот реп.
 
 # YummyAnime Downloader
+<img width="2205" height="1279" alt="изображение" src="https://github.com/user-attachments/assets/2ae26c12-ed14-4329-83b1-cfde79ea45b5" />
+
 
 Скачивание аниме с [YummyAnime](https://ru.yummyani.me) через Kodik и Sibnet плееры.
 
