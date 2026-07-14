@@ -173,7 +173,7 @@ function filterEpisodes() {
     });
 
     const pg = document.getElementById('sibnet-pause-group');
-    if (pg) pg.classList.toggle('hidden', player.toLowerCase().includes('kodik'));
+    if (pg) pg.style.display = player.toLowerCase().includes('kodik') ? 'none' : '';
 }
 
 function selectAll() {
