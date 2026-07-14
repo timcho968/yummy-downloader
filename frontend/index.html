@@ -35,6 +35,12 @@
         <section id="episodes-section" class="episodes-section hidden">
             <h3>Серии</h3>
 
+            <div class="download-dir-group">
+                <label>Папка для скачивания:</label>
+                <input type="text" id="download-dir" placeholder="Путь для скачивания..." />
+                <button onclick="saveDownloadDir()">Сохранить</button>
+            </div>
+
             <div class="controls">
                 <div class="control-group">
                     <label>Озвучка:</label>
@@ -85,5 +91,6 @@
     </div>
 
     <script src="/static/app.js"></script>
+    <script>loadSettings();</script>
 </body>
 </html>

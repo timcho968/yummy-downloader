@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import asyncio
 import logging
@@ -30,17 +31,33 @@ logging.basicConfig(
 )
 log = logging.getLogger("downloader")
 
-DOWNLOAD_DIR = Path(__file__).parent.parent / "downloads"
-DOWNLOAD_DIR.mkdir(exist_ok=True)
 CONFIG_PATH = Path(__file__).parent.parent / "config.json"
 
+def _is_termux():
+    return "/data/data/com.termux" in sys.executable or Path.home().joinpath(".termux").exists()
 
-def load_token() -> str:
+def _default_download_dir():
+    if _is_termux():
+        return str(Path.home() / "storage" / "downloads" / "YummyAnime")
+    return str(Path(__file__).parent.parent / "downloads")
+
+def load_config() -> dict:
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-            return cfg.get("yummy_app_token", "")
-    return os.environ.get("YUMMY_APP_TOKEN", "")
+            return json.load(f)
+    return {}
+
+def save_config(cfg: dict):
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+def load_token() -> str:
+    cfg = load_config()
+    return cfg.get("yummy_app_token", "")
+
+def load_download_dir() -> str:
+    cfg = load_config()
+    return cfg.get("download_dir", _default_download_dir())
 
 
 APP_TOKEN = load_token()
@@ -48,16 +65,20 @@ APP_TOKEN = load_token()
 client: YummyClient | None = None
 active_downloads: dict[str, dict] = {}
 ws_connections: list[WebSocket] = []
+download_dir: str = load_download_dir()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global client
+    global client, download_dir
     client = YummyClient(APP_TOKEN)
+    download_dir = load_download_dir()
+    Path(download_dir).mkdir(parents=True, exist_ok=True)
     if APP_TOKEN:
         log.info(f"Using API token: {APP_TOKEN[:8]}...")
     else:
         log.info("Running without API token (works for basic use)")
+    log.info(f"Download directory: {download_dir}")
     yield
 
 
@@ -79,6 +100,29 @@ async def search_anime(q: str, limit: int = 20):
         return {"data": [r.model_dump() for r in results]}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/settings")
+async def get_settings():
+    cfg = load_config()
+    return {
+        "download_dir": cfg.get("download_dir", _default_download_dir()),
+    }
+
+
+@app.post("/api/settings")
+async def update_settings(data: dict):
+    global download_dir
+    cfg = load_config()
+    if "download_dir" in data:
+        new_dir = data["download_dir"].strip()
+        if new_dir:
+            cfg["download_dir"] = new_dir
+            download_dir = new_dir
+            Path(new_dir).mkdir(parents=True, exist_ok=True)
+            log.info(f"Download directory changed to: {new_dir}")
+    save_config(cfg)
+    return {"download_dir": cfg.get("download_dir", _default_download_dir())}
 
 
 @app.get("/api/anime/{anime_url:path}")
@@ -124,8 +168,9 @@ def _detect_player(iframe_url: str) -> str:
 
 @app.post("/api/download")
 async def start_download(req: DownloadRequest):
+    global download_dir
     download_id = f"{req.output_path}_{id(req)}"
-    output_path = str(DOWNLOAD_DIR / req.output_path)
+    output_path = str(Path(download_dir) / req.output_path)
 
     log.info(f"Starting download: {req.output_path} from {req.url[:80]}...")
 
@@ -193,14 +238,17 @@ async def start_download(req: DownloadRequest):
 
 @app.get("/api/downloads")
 async def list_downloads():
+    global download_dir
     files = []
-    for f in DOWNLOAD_DIR.iterdir():
-        if f.is_file():
-            files.append({
-                "name": f.name,
-                "size": f.stat().st_size,
-                "path": str(f),
-            })
+    dl_path = Path(download_dir)
+    if dl_path.exists():
+        for f in dl_path.iterdir():
+            if f.is_file():
+                files.append({
+                    "name": f.name,
+                    "size": f.stat().st_size,
+                    "path": str(f),
+                })
     return {"data": files}
 
 

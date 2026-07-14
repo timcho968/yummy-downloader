@@ -16,6 +16,26 @@ function hide(id) {
     document.getElementById(id).classList.add('hidden');
 }
 
+async function loadSettings() {
+    try {
+        const resp = await fetch('/api/settings');
+        const data = await resp.json();
+        document.getElementById('download-dir').value = data.download_dir || '';
+    } catch {}
+}
+
+async function saveDownloadDir() {
+    const dir = document.getElementById('download-dir').value.trim();
+    if (!dir) return;
+    try {
+        await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ download_dir: dir }),
+        });
+    } catch {}
+}
+
 async function loadAnime() {
     const urlInput = document.getElementById('anime-url');
     const url = urlInput.value.trim();
