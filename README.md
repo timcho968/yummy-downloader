@@ -1,3 +1,5 @@
+князь недоволен, света и связи нету. В условиях джуглей с ракетами я создал этот реп.
+
 # YummyAnime Downloader
 
 Скачивание аниме с [YummyAnime](https://ru.yummyani.me) через Kodik и Sibnet плееры.
