@@ -1,5 +1,4 @@
 import os
-import sys
 import json
 import asyncio
 import logging
@@ -33,12 +32,7 @@ log = logging.getLogger("downloader")
 
 CONFIG_PATH = Path(__file__).parent.parent / "config.json"
 
-def _is_termux():
-    return "/data/data/com.termux" in sys.executable or Path.home().joinpath(".termux").exists()
-
 def _default_download_dir():
-    if _is_termux():
-        return str(Path.home() / "storage" / "downloads" / "YummyAnime")
     return str(Path(__file__).parent.parent / "downloads")
 
 def load_config() -> dict:
@@ -107,6 +101,7 @@ async def get_settings():
     cfg = load_config()
     return {
         "download_dir": cfg.get("download_dir", _default_download_dir()),
+        "sibnet_pause": cfg.get("sibnet_pause", 30),
     }
 
 
@@ -121,8 +116,19 @@ async def update_settings(data: dict):
             download_dir = new_dir
             Path(new_dir).mkdir(parents=True, exist_ok=True)
             log.info(f"Download directory changed to: {new_dir}")
+    if "sibnet_pause" in data:
+        try:
+            pause = int(data["sibnet_pause"])
+            pause = max(0, min(300, pause))
+            cfg["sibnet_pause"] = pause
+            log.info(f"Sibnet inter-episode pause set to: {pause}s")
+        except (ValueError, TypeError):
+            pass
     save_config(cfg)
-    return {"download_dir": cfg.get("download_dir", _default_download_dir())}
+    return {
+        "download_dir": cfg.get("download_dir", _default_download_dir()),
+        "sibnet_pause": cfg.get("sibnet_pause", 30),
+    }
 
 
 @app.get("/api/anime/{anime_url:path}")
@@ -174,10 +180,13 @@ async def start_download(req: DownloadRequest):
 
     log.info(f"Starting download: {req.output_path} from {req.url[:80]}...")
 
+    client_id = req.client_id or ""
+
     active_downloads[download_id] = {
         "status": "starting",
         "percent": 0,
         "filename": req.output_path,
+        "client_id": client_id,
     }
 
     loop = asyncio.get_event_loop()
@@ -189,7 +198,7 @@ async def start_download(req: DownloadRequest):
         try:
             loop.call_soon_threadsafe(
                 asyncio.ensure_future,
-                broadcast_progress(download_id, info),
+                broadcast_progress(download_id, info, client_id),
             )
         except RuntimeError:
             pass
@@ -203,6 +212,8 @@ async def start_download(req: DownloadRequest):
                 cookies=req.cookies or {},
                 extra_headers=req.extra_headers or {},
                 progress_callback=progress_cb,
+                iframe_url=req.iframe_url,
+                player=req.player,
             )
             log.info(f"Download complete: {req.output_path}")
             active_downloads[download_id].update({
@@ -212,7 +223,7 @@ async def start_download(req: DownloadRequest):
             try:
                 loop.call_soon_threadsafe(
                     asyncio.ensure_future,
-                    broadcast_progress(download_id, {"status": "done", "percent": 100}),
+                    broadcast_progress(download_id, {"status": "done", "percent": 100, "filename": req.output_path}, client_id),
                 )
             except RuntimeError:
                 pass
@@ -225,7 +236,7 @@ async def start_download(req: DownloadRequest):
             try:
                 loop.call_soon_threadsafe(
                     asyncio.ensure_future,
-                    broadcast_progress(download_id, {"status": "error", "error": str(e)}),
+                    broadcast_progress(download_id, {"status": "error", "error": str(e), "filename": req.output_path}, client_id),
                 )
             except RuntimeError:
                 pass
@@ -265,8 +276,8 @@ async def websocket_progress(ws: WebSocket):
         ws_connections.remove(ws)
 
 
-async def broadcast_progress(download_id: str, info: dict):
-    message = json.dumps({"download_id": download_id, **info})
+async def broadcast_progress(download_id: str, info: dict, client_id: str = ""):
+    message = json.dumps({"download_id": download_id, "client_id": client_id, **info})
     dead = []
     for ws in ws_connections:
         try:

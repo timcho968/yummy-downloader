@@ -56,6 +56,9 @@ class DownloadRequest(BaseModel):
     referer: str = "https://yummyani.me/"
     cookies: dict[str, str] = {}
     extra_headers: dict[str, str] = {}
+    client_id: str = ""
+    iframe_url: str = ""
+    player: str = ""
 
 
 class DownloadProgress(BaseModel):

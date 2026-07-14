@@ -1,6 +1,8 @@
+const KODIK_BATCH = 4;
 let currentAnime = null;
 let allEpisodes = [];
 let ws = null;
+let lastEpisodeSpeed = 0;
 
 function setStatus(id, msg, type = '') {
     const el = document.getElementById(id);
@@ -21,6 +23,9 @@ async function loadSettings() {
         const resp = await fetch('/api/settings');
         const data = await resp.json();
         document.getElementById('download-dir').value = data.download_dir || '';
+        if (typeof data.sibnet_pause === 'number') {
+            document.getElementById('sibnet-pause').value = data.sibnet_pause;
+        }
     } catch {}
 }
 
@@ -32,6 +37,17 @@ async function saveDownloadDir() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ download_dir: dir }),
+        });
+    } catch {}
+}
+
+async function savePause() {
+    const pause = parseInt(document.getElementById('sibnet-pause').value) || 0;
+    try {
+        await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sibnet_pause: pause }),
         });
     } catch {}
 }
@@ -155,6 +171,9 @@ function filterEpisodes() {
         };
         list.appendChild(card);
     });
+
+    const pg = document.getElementById('sibnet-pause-group');
+    if (pg) pg.classList.toggle('hidden', player.toLowerCase().includes('kodik'));
 }
 
 function selectAll() {
@@ -192,7 +211,6 @@ function selectRange() {
             card.classList.remove('selected');
         }
     });
-
 }
 
 async function startBatchDownload() {
@@ -204,7 +222,6 @@ async function startBatchDownload() {
 
     const quality = document.getElementById('quality-select').value;
     const animeName = currentAnime.name.replace(/[<>:"/\\|?*]/g, '_');
-    const dubbing = document.getElementById('dubbing-select').value;
 
     show('progress-section');
     const progressList = document.getElementById('progress-list');
@@ -212,25 +229,87 @@ async function startBatchDownload() {
 
     connectWebSocket();
 
-    for (const cb of checked) {
-        const iframeUrl = cb.dataset.iframe;
-        const number = cb.dataset.number;
-        const filename = `${animeName}/EP${number}.mp4`;
+    const episodes = Array.from(checked);
 
-        // Add progress item
-        const item = document.createElement('div');
-        item.className = 'progress-item';
-        item.id = `progress-${number}`;
-        item.innerHTML = `
-            <div class="progress-info">
-                <span>EP${number} - Получение ссылки...</span>
-                <span class="progress-speed"></span>
-            </div>
-            <div class="progress-bar-container">
-                <div class="progress-bar" style="width: 0%"></div>
-            </div>
-        `;
-        progressList.appendChild(item);
+    const player = episodes[0].dataset.player || '';
+    const isSibnet = !player.toLowerCase().includes('kodik');
+    const batchSize = isSibnet ? 1 : KODIK_BATCH;
+
+    let basePause = parseInt(document.getElementById('sibnet-pause').value) || 30;
+    basePause = Math.max(0, Math.min(300, basePause));
+    let currentPause = basePause;
+    lastEpisodeSpeed = 0;
+
+    for (let i = 0; i < episodes.length; i += batchSize) {
+        const batch = episodes.slice(i, i + batchSize);
+
+        for (const cb of batch) {
+            const number = cb.dataset.number;
+            const item = document.createElement('div');
+            item.className = 'progress-item';
+            item.id = `progress-${number}`;
+            item.innerHTML = `
+                <div class="progress-info">
+                    <span>EP${number} - Получение ссылки...</span>
+                    <span class="progress-speed"></span>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="progress-bar" style="width: 0%"></div>
+                </div>
+            `;
+            progressList.appendChild(item);
+        }
+
+        const batchPromises = batch.map(cb => startEpisode(cb, quality, animeName, player));
+        await Promise.all(batchPromises);
+
+        // Пауза между сериями для Sibnet: восстанавливает per-IP квоту скорости.
+        // Адаптивно: если прошлая серия шла медленно (<2 МБ/с) — удваиваем паузу.
+        if (isSibnet && i + batchSize < episodes.length) {
+            if (lastEpisodeSpeed > 0 && lastEpisodeSpeed < 2) {
+                currentPause = Math.min(300, currentPause * 2);
+                log(`Серия шла медленно (${lastEpisodeSpeed.toFixed(2)} МБ/с) — увеличиваю паузу до ${currentPause}с`);
+            }
+            await sleepWithCountdown(currentPause);
+            currentPause = basePause;
+        }
+    }
+    batchBanner('');
+}
+
+function batchBanner(msg) {
+    let el = document.getElementById('batch-banner');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'batch-banner';
+        el.className = 'status';
+        const sec = document.getElementById('progress-section');
+        if (sec) sec.prepend(el);
+    }
+    el.textContent = msg;
+    el.className = 'status ' + (msg ? 'warning' : '');
+}
+
+async function sleepWithCountdown(sec) {
+    for (let i = sec; i > 0; i--) {
+        batchBanner(`Ожидание антибот: ${i}с (пауза восстанавливает квоту скорости)...`);
+        await new Promise(r => setTimeout(r, 1000));
+    }
+}
+
+function log(msg) {
+    // lightweight console logging for adaptive decisions
+    if (window.console) console.log('[batch] ' + msg);
+}
+
+function startEpisode(cb, quality, animeName, player) {
+    return new Promise(async (resolve) => {
+        const number = cb.dataset.number;
+        const iframeUrl = cb.dataset.iframe;
+        const filename = `${animeName}/EP${number}.mp4`;
+        const clientId = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+
+        const donePromise = waitForCompletion(clientId);
 
         try {
             const player = cb.dataset.player || '';
@@ -244,7 +323,9 @@ async function startBatchDownload() {
 
             if (resolveData.error || !resolveData.data || resolveData.data.length === 0) {
                 updateProgress(number, { status: 'error', error: resolveData.error || 'Не удалось получить ссылку' });
-                continue;
+                donePromise.cancel();
+                resolve();
+                return;
             }
 
             const streams = resolveData.data;
@@ -262,16 +343,45 @@ async function startBatchDownload() {
                     output_path: filename,
                     quality: quality,
                     extra_headers: stream.headers || {},
+                    client_id: clientId,
+                    iframe_url: iframeUrl,
+                    player: player,
                 }),
             });
             const dlData = await dlResp.json();
             if (dlData.error) {
                 updateProgress(number, { status: 'error', error: dlData.error });
+                donePromise.cancel();
+                resolve();
+                return;
             }
+
+            await donePromise.promise;
         } catch (e) {
             updateProgress(number, { status: 'error', error: e.message });
         }
-    }
+        resolve();
+    });
+}
+
+function waitForCompletion(clientId) {
+    let cancelFn;
+    const promise = new Promise((resolve) => {
+        const handler = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (!data.client_id || data.client_id !== clientId) return;
+
+                if (data.status === 'done' || data.status === 'error') {
+                    ws.removeEventListener('message', handler);
+                    resolve();
+                }
+            } catch (e) {}
+        };
+        ws.addEventListener('message', handler);
+        cancelFn = () => { ws.removeEventListener('message', handler); resolve(); };
+    });
+    return { promise, cancel: cancelFn };
 }
 
 function updateProgress(number, info) {
@@ -287,6 +397,8 @@ function updateProgress(number, info) {
         bar.className = 'progress-bar';
         infoSpan.textContent = `EP${number} - Скачивание...`;
         speedSpan.textContent = info.speed || '';
+        const m = (info.speed || '').match(/([\d.]+)\s*MB\/s/);
+        if (m) lastEpisodeSpeed = parseFloat(m[1]);
     } else if (info.status === 'done') {
         bar.style.width = '100%';
         bar.className = 'progress-bar done';

@@ -10,7 +10,7 @@
     <div class="container">
         <header>
             <h1>YummyAnime Downloader</h1>
-            <p class="subtitle">Скачивай аниме с YummyAnime</p>
+            <p class="subtitle">юзайте с впн</p>
         </header>
 
         <section class="search-section">
@@ -35,11 +35,19 @@
         <section id="episodes-section" class="episodes-section hidden">
             <h3>Серии</h3>
 
-            <div class="download-dir-group">
-                <label>Папка для скачивания:</label>
-                <input type="text" id="download-dir" placeholder="Путь для скачивания..." />
-                <button onclick="saveDownloadDir()">Сохранить</button>
-            </div>
+                <div class="download-dir-group">
+                    <label>Папка для скачивания:</label>
+                    <input type="text" id="download-dir" placeholder="Путь для скачивания..." />
+                    <button onclick="saveDownloadDir()">Сохранить</button>
+                </div>
+
+                <div class="download-dir-group hidden" id="sibnet-pause-group">
+                    <label>Пауза м/у сериями (с):</label>
+                    <input type="number" id="sibnet-pause" min="0" max="300" step="5" value="30" class="range-input" />
+                    <button onclick="savePause()">Сохранить</button>
+                    <span class="hint">Sibnet душит до ~реал. времени на 1 IP. Пауза восстанавливает квоту скорости.</span>
+                </div>
+
 
             <div class="controls">
                 <div class="control-group">
@@ -54,7 +62,6 @@
                     <label>Качество:</label>
                     <select id="quality-select">
                         <option value="720">720p</option>
-                        <option value="1080">1080p</option>
                         <option value="480">480p</option>
                         <option value="360">360p</option>
                     </select>
